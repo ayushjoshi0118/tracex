@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  tracex-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tracex-platform
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_NAME=TRACEX
+      - TAGLINE=Investigate. Analyze. Correlate. Discover.
+      - DATABASE_URL=sqlite:////app/data/tracex.db
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
+      - ALIENVAULT_OTX_API_KEY=${ALIENVAULT_OTX_API_KEY:-}
+    volumes:
+      - tracex-quarantine:/app/backend/storage/quarantine
+      - tracex-reports:/app/backend/storage/reports
+      - tracex-data:/app/data
+
+volumes:
+  tracex-quarantine:
+    driver: local
+  tracex-reports:
+    driver: local
+  tracex-data:
+    driver: local

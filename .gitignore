@@ -1,0 +1,30 @@
+# Python / Backend
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+tracex.db
+backend/storage/quarantine/*
+!backend/storage/quarantine/.gitkeep
+backend/storage/reports/*
+!backend/storage/reports/.gitkeep
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.turbo/
+
+# Environment and Secrets
+.env
+.env.local
+
+# IDEs & System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
