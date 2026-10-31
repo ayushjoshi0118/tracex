@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, status
 from backend.app.config import settings
 from backend.app.schemas.forensics import NetworkForensicsResponse
 from backend.app.services.network_forensics import analyze_pcap_forensics
-from backend.app.utils.security import generate_quarantine_path
+from backend.app.utils.security import generate_quarantine_path, enforce_safe_file_permissions
 
 router = APIRouter(prefix="/network", tags=["Network Forensics"])
 
@@ -33,6 +33,8 @@ async def analyze_uploaded_pcap(file: UploadFile = File(...)):
                     detail=f"PCAP exceeds size limit ({settings.MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB)"
                 )
             buffer.write(chunk)
+
+    enforce_safe_file_permissions(target_path)
 
     try:
         results = analyze_pcap_forensics(target_path)

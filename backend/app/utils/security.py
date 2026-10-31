@@ -90,3 +90,15 @@ def extract_ascii_and_unicode_strings(data: bytes, min_length: int = 4, max_stri
             continue
             
     return found_strings
+
+def enforce_safe_file_permissions(file_path: Path) -> None:
+    """
+    Ensure quarantined evidence files have strict non-executable permissions (rw------- / 0o600).
+    Executed on POSIX environments (Linux / Docker / macOS).
+    """
+    if os.name != "nt" and file_path.exists():
+        try:
+            os.chmod(file_path, 0o600)
+        except OSError:
+            pass
+

@@ -4,7 +4,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, status
 from backend.app.config import settings
 from backend.app.schemas.forensics import FileForensicsResponse
 from backend.app.services.file_forensics import analyze_file_forensics
-from backend.app.utils.security import generate_quarantine_path
+from backend.app.utils.security import generate_quarantine_path, enforce_safe_file_permissions
 
 router = APIRouter(prefix="/files", tags=["File Forensics"])
 
@@ -37,6 +37,8 @@ async def upload_and_analyze_file(file: UploadFile = File(...)):
                     detail=f"File exceeds maximum allowed upload size ({settings.MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB)"
                 )
             buffer.write(chunk)
+
+    enforce_safe_file_permissions(target_path)
 
     try:
         # Run isolated forensic examination

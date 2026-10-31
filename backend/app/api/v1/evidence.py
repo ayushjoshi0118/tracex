@@ -20,7 +20,7 @@ from backend.app.services.comparison_service import (
     compare_evidence_artifacts,
     EvidenceComparisonResponse
 )
-from backend.app.utils.security import generate_quarantine_path
+from backend.app.utils.security import generate_quarantine_path, enforce_safe_file_permissions
 
 class EvidenceComparisonRequest(BaseModel):
     evidence_id_a: str
@@ -73,6 +73,8 @@ async def register_evidence(
                     detail="File exceeds maximum evidence size limit"
                 )
             buffer.write(chunk)
+
+    enforce_safe_file_permissions(target_path)
 
     evidence = register_evidence_item(
         db=db,

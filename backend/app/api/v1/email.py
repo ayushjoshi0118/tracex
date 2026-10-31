@@ -3,7 +3,7 @@ from typing import Optional
 from backend.app.config import settings
 from backend.app.schemas.forensics import EmailForensicsResponse
 from backend.app.services.email_forensics import analyze_email_forensics
-from backend.app.utils.security import generate_quarantine_path
+from backend.app.utils.security import generate_quarantine_path, enforce_safe_file_permissions
 
 router = APIRouter(prefix="/email", tags=["Email Forensics"])
 
@@ -26,6 +26,9 @@ async def analyze_uploaded_email(
         target_path, _ = generate_quarantine_path(settings.QUARANTINE_DIR, "pasted_message.eml")
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(raw_content)
+
+    if target_path:
+        enforce_safe_file_permissions(target_path)
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
