@@ -3,7 +3,7 @@ import re
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set, Tuple
 from collections import defaultdict
 
 # Suppress Scapy layer 2 warnings for offline PCAP processing
@@ -36,10 +36,67 @@ SUSPICIOUS_PORTS = {
     5555: "Android ADB Remote Exploitation Target"
 }
 
+def extract_tls_sni(payload: bytes) -> Optional[str]:
+    """
+    Safely extract Server Name Indication (SNI) hostname from TLS ClientHello packet bytes.
+    Operates offline without requiring TLS decryption.
+    """
+    if len(payload) < 43:
+        return None
+    # TLS Record Header: Type 0x16 (Handshake)
+    if payload[0] != 0x16:
+        return None
+    # Handshake Header: Type 0x01 (ClientHello)
+    if len(payload) < 9 or payload[5] != 0x01:
+        return None
+    try:
+        idx = 5 + 4  # skip record header + handshake header
+        # Client Version (2 bytes) + Client Random (32 bytes) = 34 bytes
+        idx += 34
+        if idx >= len(payload):
+            return None
+        # Session ID length (1 byte)
+        session_id_len = payload[idx]
+        idx += 1 + session_id_len
+        if idx + 2 > len(payload):
+            return None
+        # Cipher Suites length (2 bytes)
+        cipher_suites_len = int.from_bytes(payload[idx:idx+2], "big")
+        idx += 2 + cipher_suites_len
+        if idx + 1 > len(payload):
+            return None
+        # Compression Methods length (1 byte)
+        compression_len = payload[idx]
+        idx += 1 + compression_len
+        if idx + 2 > len(payload):
+            return None
+        # Extensions length (2 bytes)
+        extensions_len = int.from_bytes(payload[idx:idx+2], "big")
+        idx += 2
+        end_extensions = idx + extensions_len
+        
+        while idx + 4 <= end_extensions and idx + 4 <= len(payload):
+            ext_type = int.from_bytes(payload[idx:idx+2], "big")
+            ext_len = int.from_bytes(payload[idx+2:idx+4], "big")
+            idx += 4
+            if ext_type == 0:  # server_name extension
+                if idx + 5 <= len(payload):
+                    # server_name_list_length (2) + name_type (1) + name_length (2)
+                    name_len = int.from_bytes(payload[idx+3:idx+5], "big")
+                    if idx + 5 + name_len <= len(payload):
+                        hostname = payload[idx+5:idx+5+name_len].decode("utf-8", errors="ignore").strip()
+                        if hostname:
+                            return hostname
+            idx += ext_len
+    except Exception:
+        pass
+    return None
+
 def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> NetworkForensicsResponse:
     """
     Offline forensic inspection of Libpcap/pcapng captures.
     Safely limits parsing up to max_packets to prevent denial-of-service / memory exhaustion.
+    Performs DPI for DNS, HTTP, TLS SNI, and TCP flag heuristics.
     """
     filename = file_path.name
     file_size_bytes = os.path.getsize(file_path)
@@ -68,11 +125,17 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
         "packets": 0, "bytes": 0, "src": "", "dst": "", "proto": ""
     })
 
-    # Anomalies
+    # Anomalies and heuristic metrics
     anomalies: List[NetworkAnomaly] = []
-    suspicious_ports_found = set()
+    suspicious_ports_found: Set[Tuple[int, str, str, str]] = set()
     high_entropy_dns_count = 0
     plaintext_creds_found = []
+    tls_sni_seen: Set[str] = set()
+
+    # TCP flag tracking for scan detection
+    # ip -> set of targeted dst ports with SYN flag
+    syn_scan_tracker: Dict[str, Set[int]] = defaultdict(set)
+    tcp_flag_counts: Dict[str, int] = defaultdict(int)
 
     try:
         with PcapReader(str(file_path)) as reader:
@@ -81,8 +144,12 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
                 if total_packets > max_packets:
                     break
 
-                pkt_len = len(pkt)
-                pkt_time = float(pkt.time)
+                try:
+                    pkt_len = len(pkt)
+                    pkt_time = float(pkt.time)
+                except Exception:
+                    continue
+
                 if start_time is None or pkt_time < start_time:
                     start_time = pkt_time
                 if end_time is None or pkt_time > end_time:
@@ -116,6 +183,22 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
                 if pkt.haslayer(TCP):
                     src_port = pkt[TCP].sport
                     dst_port = pkt[TCP].dport
+
+                    # TCP Flag Analysis
+                    flags = pkt[TCP].flags
+                    # Scapy flags: S (SYN), A (ACK), F (FIN), R (RST), P (PSH), U (URG)
+                    flags_str = str(flags)
+                    if "S" in flags_str and "A" not in flags_str:
+                        tcp_flag_counts["SYN"] += 1
+                        if src_ip and dst_port:
+                            syn_scan_tracker[src_ip].add(dst_port)
+                    elif "S" in flags_str and "A" in flags_str:
+                        tcp_flag_counts["SYN-ACK"] += 1
+                    elif "R" in flags_str:
+                        tcp_flag_counts["RST"] += 1
+                    elif "F" in flags_str:
+                        tcp_flag_counts["FIN"] += 1
+
                 elif pkt.haslayer(UDP):
                     src_port = pkt[UDP].sport
                     dst_port = pkt[UDP].dport
@@ -150,7 +233,7 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
 
                 # Check suspicious ports
                 for p in [src_port, dst_port]:
-                    if p in SUSPICIOUS_PORTS:
+                    if p in SUSPICIOUS_PORTS and src_ip and dst_ip:
                         suspicious_ports_found.add((p, SUSPICIOUS_PORTS[p], src_ip, dst_ip))
 
                 # DNS Deep Inspection
@@ -193,11 +276,25 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
                     except Exception:
                         pass
 
-                # HTTP Deep Inspection
+                # HTTP & TLS Deep Inspection on TCP Payload
                 if pkt.haslayer(TCP) and pkt[TCP].payload:
                     try:
                         payload_raw = bytes(pkt[TCP].payload)
-                        # Check for HTTP Methods
+                        
+                        # 1. Check TLS SNI ClientHello
+                        sni = extract_tls_sni(payload_raw)
+                        if sni:
+                            tls_sni_seen.add(sni)
+                            if src_ip:
+                                talkers[src_ip]["domains"].add(f"tls:{sni}")
+                            if any(sni.endswith(f".{t}") for t in ["xyz", "top", "tk", "click", "buzz"]):
+                                anomalies.append(NetworkAnomaly(
+                                    title=f"Suspicious TLS SNI Destination ({sni})",
+                                    description=f"TLS ClientHello from {src_ip} -> {dst_ip} requested hostname with high-risk TLD: {sni}",
+                                    severity="medium"
+                                ))
+
+                        # 2. Check HTTP Methods
                         for method in [b"GET ", b"POST ", b"PUT ", b"HEAD ", b"DELETE "]:
                             if payload_raw.startswith(method):
                                 lines = payload_raw[:1024].decode("utf-8", errors="ignore").split("\r\n")
@@ -216,6 +313,9 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
                                 if auth_hdr and "Basic" in auth_hdr:
                                     plaintext_creds_found.append(f"{src_ip} -> {dst_ip} (HTTP Basic Auth)")
 
+                                if host_hdr and src_ip:
+                                    talkers[src_ip]["domains"].add(host_hdr)
+
                                 if len(http_requests) < 50:
                                     http_requests.append({
                                         "client_ip": src_ip,
@@ -231,8 +331,8 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
                         pass
     except Exception as e:
         anomalies.append(NetworkAnomaly(
-            title="PCAP Parsing Warning",
-            description=f"Stream encountered truncated or malformed packets: {str(e)}",
+            title="PCAP Frame Inspection Notice",
+            description=f"Stream encountered truncated or malformed frame boundaries: {str(e)}",
             severity="low"
         ))
 
@@ -279,14 +379,14 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
     # Generate Anomaly Detections
     for p, desc, s_ip, d_ip in suspicious_ports_found:
         anomalies.append(NetworkAnomaly(
-            title=f"Suspicious Port Activity (Port {p})",
-            description=f"Observed communication between {s_ip} and {d_ip} matching {desc}.",
+            title=f"Suspicious Port Communication (Port {p})",
+            description=f"Observed packet stream between {s_ip} and {d_ip} matching {desc}.",
             severity="high"
         ))
 
     if high_entropy_dns_count > 3:
         anomalies.append(NetworkAnomaly(
-            title="Suspected DNS Tunneling / Data Exfiltration",
+            title="Suspected DNS Tunneling / Exfiltration",
             description=f"Detected {high_entropy_dns_count} high-entropy DNS queries with long randomized subdomains.",
             severity="critical"
         ))
@@ -297,6 +397,31 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
             description=f"Observed unencrypted HTTP Basic authorization headers: {', '.join(plaintext_creds_found[:3])}",
             severity="high"
         ))
+
+    # Port scanning heuristic
+    for scanner_ip, ports_targeted in syn_scan_tracker.items():
+        if len(ports_targeted) >= 15:
+            anomalies.append(NetworkAnomaly(
+                title="Potential TCP Port Scanning Activity",
+                description=f"Source host {scanner_ip} sent TCP SYN packets across {len(ports_targeted)} distinct destination ports.",
+                severity="high"
+            ))
+
+    # TCP Reset Storm / Abrupt Teardown check
+    if total_packets > 100 and tcp_flag_counts["RST"] > (total_packets * 0.4):
+        anomalies.append(NetworkAnomaly(
+            title="Elevated TCP RST Ratio (Connection Teardown Storm)",
+            description=f"RST flag packets account for {tcp_flag_counts['RST']} frames (>{round(tcp_flag_counts['RST']/total_packets*100, 1)}% of capture), indicating rejected sessions or active firewall resets.",
+            severity="medium"
+        ))
+
+    accuracy_and_limitations = [
+        "Offline PCAP Parsing: Evaluates captured packet frames passively without active network transmission or probing.",
+        "Protocol Classification: Uses standard port mapping and deep packet inspection (DPI) heuristics for DNS, HTTP, and TLS ClientHello. Traffic on non-standard ports or encapsulated in VPN/tunnels may be classified as generic TCP/UDP.",
+        "TLS SNI Extraction: Extracts unencrypted Server Name Indication (SNI) hostnames from TLS 1.2/1.3 ClientHello records. Encrypted ClientHello (ECH) or IP-direct HTTPS connections will not reveal SNI hostnames.",
+        "Shannon Entropy Heuristics: Identifies potential DNS tunneling or data exfiltration based on character randomness and subdomain length. Legitimate CDN lookups or anti-spam queries may also exhibit elevated entropy.",
+        "Defensive Forensic Principle: Network anomalies indicate atypical communication patterns or cleartext exposures. They do not constitute conclusive proof of compromise without correlating endpoint artifacts."
+    ]
 
     return NetworkForensicsResponse(
         filename=filename,
@@ -309,5 +434,6 @@ def analyze_pcap_forensics(file_path: Path, max_packets: int = 15000) -> Network
         http_requests=http_requests,
         conversations=convs_list,
         anomalies=anomalies,
-        analysis_timestamp=datetime.now(timezone.utc)
+        analysis_timestamp=datetime.now(timezone.utc),
+        accuracy_and_limitations=accuracy_and_limitations
     )

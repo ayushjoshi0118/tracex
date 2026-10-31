@@ -21,6 +21,25 @@ from reportlab.platypus import (
 from backend.app.models.investigation import Investigation
 from backend.app.schemas.entities import ReportExportRequest
 
+CORE_LIMITATIONS_DOCUMENTATION = [
+    {
+        "module": "Module 1: File Forensics & Structural Parsing",
+        "description": "Cryptographic SHA-256/512 hashing is 100% mathematically deterministic. Shannon entropy indicates packing or compression, not malicious intent. Magic byte matches can be bypassed by polyglots. Structural anomalies and extension mismatches alone NEVER prove malware."
+    },
+    {
+        "module": "Module 2: Threat Intelligence & Provenance",
+        "description": "Feed indicators decay over time due to dynamic cloud IPs and domain reallocation. Unmatched indicators indicate unindexed assets, not verified benign status. Every lookup records explicit provider provenance and retrieval timestamp."
+    },
+    {
+        "module": "Module 3: Email Forensics & Relay Analysis",
+        "description": "Transit delays rely on MTA timestamps subject to minor clock drift. Missing SPF/DKIM/DMARC records represent an unconfigured security baseline, which must not be conflated with an active cryptographic spoofing failure."
+    },
+    {
+        "module": "Module 4: Offline Network Forensics",
+        "description": "Passive packet inspection without active probes. TLS SNI extraction inspects unencrypted ClientHello headers; ECH or raw IP traffic conceals SNI. High-entropy DNS flags potential tunneling or benign CDN lookups."
+    }
+]
+
 def generate_json_investigation_report(inv: Investigation) -> Dict[str, Any]:
     """
     Produce a structured, machine-readable forensic report in JSON format.
@@ -28,6 +47,7 @@ def generate_json_investigation_report(inv: Investigation) -> Dict[str, Any]:
     1. Verified Physical/Cryptographic Evidence (Observed Facts)
     2. External Threat Intelligence Records
     3. Analyst Hypotheses and Interpretations
+    4. Technical Accuracy and Limitations documentation
     """
     now = datetime.now(timezone.utc)
     
@@ -103,6 +123,11 @@ def generate_json_investigation_report(inv: Investigation) -> Dict[str, Any]:
         "tagline": "Investigate. Analyze. Correlate. Discover.",
         "report_type": "Official Forensic Investigation Dossier",
         "generated_at": now.isoformat(),
+        "forensic_standards_compliance": {
+            "evidentiary_standard": "ISO/IEC 27037 Digital Evidence Handling Guidelines",
+            "non_attribution_rule": "Suspicious metadata, high Shannon entropy, or file extension mismatches are structural heuristics and are NEVER claimed as definitive malware detection without dynamic behavioral confirmation or reverse engineering.",
+            "provenance_mandate": "Every threat intelligence indicator records explicit provider attribution, query timestamp, and retrieval status."
+        },
         "investigation": {
             "id": inv.id,
             "title": inv.title,
@@ -119,13 +144,14 @@ def generate_json_investigation_report(inv: Investigation) -> Dict[str, Any]:
         "forensic_findings": {
             "observed_facts": facts,
             "analyst_interpretations_and_hypotheses": interpretations
-        }
+        },
+        "methodology_accuracy_and_limitations": CORE_LIMITATIONS_DOCUMENTATION
     }
 
 def generate_pdf_investigation_report(inv: Investigation, options: ReportExportRequest) -> bytes:
     """
     Render a forensic PDF report with cryptographic tables, timeline,
-    and clear separation of facts from analyst interpretations.
+    separation of facts from analyst interpretations, and technical limitations.
     """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -181,6 +207,14 @@ def generate_pdf_investigation_report(inv: Investigation, options: ReportExportR
         fontSize=8,
         leading=10,
         textColor=colors.HexColor("#0f172a")
+    )
+    warning_style = ParagraphStyle(
+        "ReportWarning",
+        parent=styles["Normal"],
+        fontName="Helvetica-Oblique",
+        fontSize=8.5,
+        leading=11.5,
+        textColor=colors.HexColor("#b45309")
     )
 
     story = []
@@ -296,9 +330,35 @@ def generate_pdf_investigation_report(inv: Investigation, options: ReportExportR
             story.append(Paragraph(note_content, body_style))
             story.append(Spacer(1, 6))
 
+    # Technical Accuracy and Limitations Section
+    story.append(Paragraph("5. METHODOLOGY, ACCURACY & TECHNICAL LIMITATIONS", h2_style))
+    story.append(Paragraph(
+        "<b>Evidentiary Non-Attribution Standard:</b> Suspicious metadata, high Shannon entropy, or extension discrepancies are structural heuristics. In accordance with ISO/IEC 27037 forensic guidelines, they are <u>never</u> claimed as definitive proof of malware without dynamic behavioral confirmation or reverse engineering.",
+        warning_style
+    ))
+    story.append(Spacer(1, 6))
+
+    limitation_rows = [
+        [Paragraph("<b>Forensic Module</b>", body_style), Paragraph("<b>Methodology & Operational Boundaries</b>", body_style)]
+    ]
+    for lim in CORE_LIMITATIONS_DOCUMENTATION:
+        limitation_rows.append([
+            Paragraph(f"<b>{lim['module']}</b>", body_style),
+            Paragraph(lim['description'], body_style)
+        ])
+
+    lim_table = Table(limitation_rows, colWidths=[2.2 * inch, 5.2 * inch])
+    lim_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(lim_table)
+
     # Sign-off & Audit Certification
-    story.append(Spacer(1, 18))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=10))
+    story.append(Spacer(1, 16))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=8))
     story.append(Paragraph(f"<b>Certified Forensic Examiner:</b> {options.analyst_signature}", body_style))
     story.append(Paragraph(f"<b>Analyst Badge Number:</b> {options.badge_number}", body_style))
     story.append(Paragraph("<i>This document represents a legally defensible digital forensics report generated by the TRACEX platform. Chain of custody hash verification certificates are archived in the immutable ledger.</i>", subtitle_style))

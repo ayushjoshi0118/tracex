@@ -3,14 +3,25 @@ import ipaddress
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
+from collections import defaultdict
 import requests
 
 from backend.app.config import settings
 from backend.app.schemas.forensics import (
     ThreatIntelReport,
     ThreatScoreBreakdown,
-    ExternalSourceProvenance
+    ExternalSourceProvenance,
+    CorrelatedIndicator,
+    IOCCorrelationResponse
 )
+
+# Standardized Accuracy & Limitations documentation for Threat Intelligence
+INTEL_ACCURACY_AND_LIMITATIONS = [
+    "External Provenance Verification: Queries configured threat feeds and curated intelligence sets. Indicators without matches reflect unindexed assets, NOT proven benign status.",
+    "Temporal Validity: Threat scores and IP reputation records decay over time. IP reallocation and dynamic cloud hosting can result in benign systems inheriting historical threat flags.",
+    "Heuristic Separation: Evaluates structural heuristics (e.g. DGA entropy, brand impersonation substrings) separately from verified cryptographic matches.",
+    "Evidentiary Distinction: TraceX strictly distinguishes verified observed evidence (local pcap/file artifacts) from external third-party threat feeds and heuristic observations."
+]
 
 # Known Threat Intel dataset of historical and curated malicious/suspicious indicators
 # for offline validation and fallback provenance
@@ -148,7 +159,7 @@ def query_threat_intelligence(ioc_value: str, force_live: bool = False) -> Threa
     now = datetime.now(timezone.utc)
     external_sources: List[ExternalSourceProvenance] = []
 
-    # 1. Check for live API lookup if keys are present
+    # 1. Check for live API lookup if keys are configured
     if settings.VIRUSTOTAL_API_KEY and ioc_type in ["ip", "domain", "hash", "url"]:
         try:
             vt_endpoint = f"https://www.virustotal.com/api/v3/{'ip_addresses' if ioc_type=='ip' else 'domains' if ioc_type=='domain' else 'files'}/{clean_value}"
@@ -183,7 +194,8 @@ def query_threat_intelligence(ioc_value: str, force_live: bool = False) -> Threa
                     categories=["malware", "external_detection"] if reputation_score > 10 else ["benign"],
                     external_sources=external_sources,
                     raw_attributes=stats,
-                    query_timestamp=now
+                    query_timestamp=now,
+                    accuracy_and_limitations=INTEL_ACCURACY_AND_LIMITATIONS
                 )
         except Exception as e:
             external_sources.append(ExternalSourceProvenance(
@@ -193,7 +205,7 @@ def query_threat_intelligence(ioc_value: str, force_live: bool = False) -> Threa
                 status=f"API Error/Timeout: {str(e)}"
             ))
 
-    # 2. Check local threat database
+    # 2. Check local curated threat database
     lookup_key = clean_value.lower()
     if lookup_key in KNOWN_THREAT_DATABASE:
         db_match = KNOWN_THREAT_DATABASE[lookup_key]
@@ -220,7 +232,8 @@ def query_threat_intelligence(ioc_value: str, force_live: bool = False) -> Threa
             threat_actors_or_campaigns=db_match.get("actors", []),
             external_sources=external_sources,
             raw_attributes={"analyst_notes": db_match.get("notes")},
-            query_timestamp=now
+            query_timestamp=now,
+            accuracy_and_limitations=INTEL_ACCURACY_AND_LIMITATIONS
         )
 
     # 3. Private / RFC1918 or Loopback check
@@ -248,7 +261,8 @@ def query_threat_intelligence(ioc_value: str, force_live: bool = False) -> Threa
                     geolocation={"country": "Local / Internal Network", "country_code": "LOC"},
                     external_sources=external_sources,
                     raw_attributes={"is_private": True, "is_loopback": ip_obj.is_loopback},
-                    query_timestamp=now
+                    query_timestamp=now,
+                    accuracy_and_limitations=INTEL_ACCURACY_AND_LIMITATIONS
                 )
         except ValueError:
             pass
@@ -289,7 +303,7 @@ def query_threat_intelligence(ioc_value: str, force_live: bool = False) -> Threa
         retrieval_timestamp=now,
         source_url="https://tracex.defense.local/engine/heuristics",
         is_live_api=False,
-        status="Indicator Evaluated Against 38 Heuristic Rules"
+        status="Indicator Evaluated Against Heuristic Heuristic Rules"
     ))
 
     return ThreatIntelReport(
@@ -305,5 +319,108 @@ def query_threat_intelligence(ioc_value: str, force_live: bool = False) -> Threa
         geolocation=None,
         external_sources=external_sources,
         raw_attributes={"evaluated_pattern": ioc_type, "heuristics_applied": len(heuristics_categories)},
-        query_timestamp=now
+        query_timestamp=now,
+        accuracy_and_limitations=INTEL_ACCURACY_AND_LIMITATIONS
+    )
+
+def correlate_indicators(raw_indicators: List[Dict[str, Any]]) -> IOCCorrelationResponse:
+    """
+    Multi-stage IOC correlation engine across file strings, email headers, and PCAP streams.
+    Calculates weighted confidence based on cross-source corroboration and strictly
+    separates:
+    1. verified_evidence (Observed directly in physical artifact)
+    2. external_intelligence (Attributed via threat intelligence feeds)
+    3. heuristic_observation (Structural patterns, entropy, or keyword heuristics)
+    """
+    # Group by indicator value
+    grouped_sources: Dict[str, List[str]] = defaultdict(list)
+    grouped_types: Dict[str, str] = {}
+
+    for item in raw_indicators:
+        val = str(item.get("value") or item.get("ioc") or "").strip()
+        if not val:
+            continue
+        source = str(item.get("source") or item.get("evidence_source") or "Unspecified Source")
+        grouped_sources[val].append(source)
+        if val not in grouped_types:
+            grouped_types[val] = item.get("type") or detect_ioc_type(val)
+
+    correlated_items: List[CorrelatedIndicator] = []
+    category_counts: Dict[str, int] = defaultdict(int)
+    highest_score = 0.0
+
+    for ioc_val, sources in grouped_sources.items():
+        unique_sources = sorted(list(set(sources)))
+        source_count = len(unique_sources)
+
+        # Lookup threat intel for this indicator
+        intel = query_threat_intelligence(ioc_val)
+        score = intel.score.reputation_score
+        highest_score = max(highest_score, score)
+
+        # Corroboration level and confidence weighting
+        if source_count >= 3:
+            corroboration = "Cross-Disciplinary (3+ Sources)"
+            weight = 1.0
+        elif source_count == 2:
+            corroboration = "Corroborated (2 Sources)"
+            weight = 0.85
+        else:
+            corroboration = "Single Source"
+            weight = 0.65
+
+        # Evidentiary categorization
+        # If observed in raw evidence (e.g. PCAP or File Header)
+        is_evidence = any("pcap" in s.lower() or "file" in s.lower() or "email" in s.lower() or "artifact" in s.lower() for s in unique_sources)
+        is_external = any(s.is_live_api or "Repository" in s.provider for s in intel.external_sources)
+        is_heuristic = "Heuristic" in intel.external_sources[0].provider if intel.external_sources else False
+
+        if is_evidence and score > 50:
+            category = "verified_evidence"
+            analyst_ctx = f"Observed in active case telemetry ({', '.join(unique_sources)}) and corroborated by high-confidence threat intelligence."
+        elif is_external and not is_heuristic:
+            category = "external_intelligence"
+            analyst_ctx = f"Matched external threat intelligence repository ({intel.score.classification})."
+        elif is_heuristic:
+            category = "heuristic_observation"
+            analyst_ctx = f"Flagged by heuristic structural analysis ({', '.join(intel.categories)}). Requires verification."
+        else:
+            category = "verified_evidence" if is_evidence else "external_intelligence"
+            analyst_ctx = f"Present in investigation evidence source: {', '.join(unique_sources)}."
+
+        category_counts[category] += 1
+
+        correlated_items.append(CorrelatedIndicator(
+            ioc_value=ioc_val,
+            ioc_type=intel.ioc_type,
+            evidence_sources=unique_sources,
+            intel_classification=intel.score.classification,
+            intel_score=score,
+            confidence_weight=weight,
+            corroboration_level=corroboration,
+            evidentiary_category=category,
+            analyst_context=analyst_ctx
+        ))
+
+    # Determine overall threat level
+    corroborated_count = sum(1 for c in correlated_items if len(c.evidence_sources) > 1)
+    if highest_score >= 80 and corroborated_count > 0:
+        threat_level = "CRITICAL / ACTIVELY CORROBORATED"
+    elif highest_score >= 60:
+        threat_level = "HIGH RISK"
+    elif highest_score >= 30:
+        threat_level = "SUSPICIOUS / ELEVATED"
+    elif highest_score > 0:
+        threat_level = "LOW RISK / HEURISTIC"
+    else:
+        threat_level = "CLEAN / BENIGN BASELINE"
+
+    return IOCCorrelationResponse(
+        total_indicators=len(correlated_items),
+        corroborated_indicators_count=corroborated_count,
+        highest_risk_score=highest_score,
+        overall_threat_level=threat_level,
+        correlated_items=correlated_items,
+        evidentiary_summary=dict(category_counts),
+        accuracy_and_limitations=INTEL_ACCURACY_AND_LIMITATIONS
     )

@@ -29,12 +29,15 @@ class FileForensicsResponse(BaseModel):
     mime_type: str
     detected_type: str
     signature: FileSignatureMatch
+    structural_metadata: dict[str, Any] = Field(default_factory=dict)
     strings_sample: list[str] = Field(default_factory=list)
     yara_matches: list[dict[str, Any]] = Field(default_factory=list)
     security_verdict: str  # clean, suspicious, malicious, anomaly_detected
+    verdict_rationale: Optional[str] = None
     quarantine_path: str
     analysis_timestamp: datetime
     analysis_notes: list[str] = Field(default_factory=list)
+    accuracy_and_limitations: list[str] = Field(default_factory=list)
 
 
 # --- MODULE 2: THREAT INTELLIGENCE SCHEMAS ---
@@ -65,6 +68,27 @@ class ThreatIntelReport(BaseModel):
     raw_attributes: dict[str, Any] = Field(default_factory=dict)
     cached: bool = False
     query_timestamp: datetime
+    accuracy_and_limitations: list[str] = Field(default_factory=list)
+
+class CorrelatedIndicator(BaseModel):
+    ioc_value: str
+    ioc_type: str
+    evidence_sources: list[str] = Field(default_factory=list)
+    intel_classification: str
+    intel_score: float
+    confidence_weight: float
+    corroboration_level: str  # Single Source, Corroborated (2+ Sources), Cross-Disciplinary (3+ Sources)
+    evidentiary_category: str  # verified_evidence, external_intelligence, heuristic_observation
+    analyst_context: str
+
+class IOCCorrelationResponse(BaseModel):
+    total_indicators: int
+    corroborated_indicators_count: int
+    highest_risk_score: float
+    overall_threat_level: str
+    correlated_items: list[CorrelatedIndicator] = Field(default_factory=list)
+    evidentiary_summary: dict[str, int] = Field(default_factory=dict)
+    accuracy_and_limitations: list[str] = Field(default_factory=list)
 
 
 # --- MODULE 3: EMAIL FORENSICS SCHEMAS ---
@@ -111,6 +135,7 @@ class EmailForensicsResponse(BaseModel):
     risk_score: float
     verdict: str  # Clean, Suspicious, Likely Phishing, High Risk Spoofing
     analysis_timestamp: datetime
+    accuracy_and_limitations: list[str] = Field(default_factory=list)
 
 
 # --- MODULE 4: NETWORK FORENSICS SCHEMAS ---
@@ -156,3 +181,4 @@ class NetworkForensicsResponse(BaseModel):
     conversations: list[dict[str, Any]] = Field(default_factory=list)
     anomalies: list[NetworkAnomaly] = Field(default_factory=list)
     analysis_timestamp: datetime
+    accuracy_and_limitations: list[str] = Field(default_factory=list)
