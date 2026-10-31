@@ -7,6 +7,7 @@ import { EmailForensics } from './pages/EmailForensics';
 import { NetworkForensics } from './pages/NetworkForensics';
 import { EvidenceLocker } from './pages/EvidenceLocker';
 import { Investigations } from './pages/Investigations';
+import { MetadataComparison } from './pages/MetadataComparison';
 import { ShieldCheck, Lock, Terminal, Activity } from 'lucide-react';
 
 export function App() {
@@ -31,11 +32,12 @@ export function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
         {currentTab === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
         {currentTab === 'files' && <FileForensics />}
+        {currentTab === 'compare' && <MetadataComparison />}
         {currentTab === 'intel' && <ThreatIntelligence />}
         {currentTab === 'email' && <EmailForensics />}
         {currentTab === 'network' && <NetworkForensics />}
         {currentTab === 'evidence' && <EvidenceLocker />}
-        {currentTab === 'investigations' && <Investigations initialCaseId={targetCaseId} />}
+        {currentTab === 'investigations' && <Investigations initialCaseId={targetCaseId} onNavigateToComparison={() => setCurrentTab('compare')} />}
       </main>
 
       {/* Platform Forensic Footer */}

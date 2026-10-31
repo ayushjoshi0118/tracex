@@ -66,3 +66,60 @@ def test_investigations_and_reports_endpoint():
     assert pdf_res.status_code == 200
     assert pdf_res.headers["content-type"] == "application/pdf"
     assert len(pdf_res.content) > 500  # Generated valid PDF stream
+
+def test_relationship_graph_endpoint():
+    res = client.get("/api/v1/investigations/")
+    assert res.status_code == 200
+    inv_id = res.json()[0]["id"]
+
+    graph_res = client.get(f"/api/v1/investigations/{inv_id}/graph")
+    assert graph_res.status_code == 200
+    graph_data = graph_res.json()
+    assert "nodes" in graph_data
+    assert "edges" in graph_data
+    assert graph_data["total_nodes"] > 0
+    assert any(n["type"] == "case" for n in graph_data["nodes"])
+    assert any(n["type"] == "evidence" for n in graph_data["nodes"])
+
+def test_evidence_comparison_and_transfer_endpoint():
+    # Register two hermetic evidence files
+    f1 = io.BytesIO(b"FORENSIC SAMPLE A CONTENT FOR COMPARISON 12345")
+    f2 = io.BytesIO(b"FORENSIC SAMPLE B CONTENT FOR COMPARISON 67890 DIFFERING BYTES")
+    
+    r1 = client.post("/api/v1/evidence/register", data={"name": "Hermetic A", "acquired_by": "Alpha", "badge_number": "B1"}, files={"file": ("sample_a.bin", f1, "application/octet-stream")})
+    r2 = client.post("/api/v1/evidence/register", data={"name": "Hermetic B", "acquired_by": "Beta", "badge_number": "B2"}, files={"file": ("sample_b.bin", f2, "application/octet-stream")})
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    ev_a = r1.json()
+    ev_b = r2.json()
+
+    # Compare two evidence items
+    comp_req = {
+        "evidence_id_a": ev_a["id"],
+        "evidence_id_b": ev_b["id"]
+    }
+    comp_res = client.post("/api/v1/evidence/compare", json=comp_req)
+    assert comp_res.status_code == 200
+    comp_data = comp_res.json()
+    assert "hashes" in comp_data
+    assert "entropy_delta" in comp_data
+    assert "header_a_hex" in comp_data
+    assert "forensic_conclusions" in comp_data
+    assert comp_data["exact_hash_match"] is False
+
+    # Test custody transfer
+    transfer_req = {
+        "transferred_to": "Examiner Delta",
+        "recipient_badge": "DFIR-9002",
+        "transferred_by": "Specialist Vance",
+        "releasing_badge": "DFIR-8820",
+        "new_location": "Secure Digital Vault Room 4B",
+        "reason": "Specialized Memory Extraction Analysis",
+        "notes": "Hand-delivered in tamper-evident static shielding bag."
+    }
+    tx_res = client.post(f"/api/v1/evidence/{ev_a['id']}/transfer", json=transfer_req)
+    assert tx_res.status_code == 200
+    tx_data = tx_res.json()
+    assert tx_data["action"] == "Custody Transfer"
+    assert tx_data["badge_number"] == "DFIR-9002"
+

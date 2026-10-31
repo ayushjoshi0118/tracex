@@ -290,3 +290,71 @@ export interface InvestigationDetail extends InvestigationSummary {
   timeline_events: TimelineEvent[];
   notes: InvestigationNote[];
 }
+
+export interface HashComparisonDetail {
+  algorithm: string;
+  hash_a: string;
+  hash_b: string;
+  is_match: boolean;
+}
+
+export interface EvidenceComparisonResponse {
+  item_a_id: string;
+  item_a_name: string;
+  item_b_id: string;
+  item_b_name: string;
+  hashes: HashComparisonDetail[];
+  exact_hash_match: boolean;
+  size_a_bytes: number;
+  size_b_bytes: number;
+  size_a_human: string;
+  size_b_human: string;
+  size_delta_bytes: number;
+  size_ratio_percentage: number;
+  entropy_a: number;
+  entropy_b: number;
+  entropy_delta: number;
+  entropy_a_level: string;
+  entropy_b_level: string;
+  signature_a: string;
+  signature_b: string;
+  is_same_file_type: boolean;
+  shared_strings_count: number;
+  unique_to_a_count: number;
+  unique_to_b_count: number;
+  shared_strings_sample: string[];
+  unique_to_a_sample: string[];
+  unique_to_b_sample: string[];
+  header_a_hex: string;
+  header_b_hex: string;
+  header_bytes_match: boolean;
+  forensic_conclusions: string[];
+}
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  group: string;
+  data: Record<string, any>;
+  severity?: string;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  relation: string;
+  confidence: number;
+}
+
+export interface InvestigationGraphResponse {
+  investigation_id: string;
+  title: string;
+  total_nodes: number;
+  total_edges: number;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+

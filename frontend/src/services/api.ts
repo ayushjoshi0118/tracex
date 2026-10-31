@@ -10,7 +10,9 @@ import {
   InvestigationDetail,
   TimelineEvent,
   InvestigationIOC,
-  InvestigationNote
+  InvestigationNote,
+  EvidenceComparisonResponse,
+  InvestigationGraphResponse
 } from '../types';
 
 const API_BASE = 'http://127.0.0.1:8000/api/v1';
@@ -98,6 +100,17 @@ export const evidenceApi = {
       notes
     });
     return res.data;
+  },
+  compare: async (idA: string, idB: string): Promise<EvidenceComparisonResponse> => {
+    const res = await apiClient.post<EvidenceComparisonResponse>('/evidence/compare', {
+      evidence_id_a: idA,
+      evidence_id_b: idB
+    });
+    return res.data;
+  },
+  transferCustody: async (id: string, data: { transferred_to: string; recipient_badge: string; transferred_by?: string; releasing_badge?: string; new_location?: string; reason?: string; notes?: string }): Promise<CustodyLog> => {
+    const res = await apiClient.post<CustodyLog>(`/evidence/${id}/transfer`, data);
+    return res.data;
   }
 };
 
@@ -108,6 +121,10 @@ export const investigationsApi = {
   },
   get: async (id: string): Promise<InvestigationDetail> => {
     const res = await apiClient.get<InvestigationDetail>(`/investigations/${id}`);
+    return res.data;
+  },
+  getGraph: async (id: string): Promise<InvestigationGraphResponse> => {
+    const res = await apiClient.get<InvestigationGraphResponse>(`/investigations/${id}/graph`);
     return res.data;
   },
   create: async (data: { title: string; description?: string; priority?: string; lead_analyst?: string }): Promise<InvestigationDetail> => {

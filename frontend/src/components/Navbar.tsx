@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   ShieldAlert, 
   FileSearch, 
+  GitCompare,
   Globe, 
   Mail, 
   Network, 
@@ -19,6 +20,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => 
   const navItems = [
     { id: 'dashboard', label: 'SOC Overview', icon: Activity },
     { id: 'files', label: 'File Forensics', icon: FileSearch },
+    { id: 'compare', label: 'Metadata Diff', icon: GitCompare },
     { id: 'intel', label: 'Threat Intel', icon: Globe },
     { id: 'email', label: 'Email Forensics', icon: Mail },
     { id: 'network', label: 'PCAP Inspector', icon: Network },

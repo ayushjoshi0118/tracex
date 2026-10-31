@@ -21,6 +21,10 @@ from backend.app.schemas.entities import (
     InvestigationNoteCreate,
     InvestigationNoteResponse
 )
+from backend.app.services.graph_service import (
+    generate_investigation_relationship_graph,
+    InvestigationGraphResponse
+)
 
 router = APIRouter(prefix="/investigations", tags=["Investigations Workspace"])
 
@@ -173,3 +177,11 @@ def add_investigation_note(inv_id: str, payload: InvestigationNoteCreate, db: Se
     db.commit()
     db.refresh(note)
     return note
+
+@router.get("/{inv_id}/graph", response_model=InvestigationGraphResponse)
+def get_investigation_graph_endpoint(inv_id: str, db: Session = Depends(get_db)):
+    """
+    Returns an interactive relationship graph connecting cases, evidence, IOCs, and milestones.
+    """
+    return generate_investigation_relationship_graph(db, inv_id)
+

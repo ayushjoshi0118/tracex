@@ -1,4 +1,5 @@
 from typing import List, Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -15,7 +16,24 @@ from backend.app.services.evidence_service import (
     verify_evidence_integrity,
     transfer_custody
 )
+from backend.app.services.comparison_service import (
+    compare_evidence_artifacts,
+    EvidenceComparisonResponse
+)
 from backend.app.utils.security import generate_quarantine_path
+
+class EvidenceComparisonRequest(BaseModel):
+    evidence_id_a: str
+    evidence_id_b: str
+
+class CustodyTransferRequest(BaseModel):
+    transferred_to: str
+    recipient_badge: str
+    transferred_by: str = "Lead Forensic Examiner"
+    releasing_badge: str = "DFIR-8820"
+    new_location: str = "Forensic Analysis Lab Station 3"
+    reason: str = "Secondary Deep Examination"
+    notes: Optional[str] = None
 
 router = APIRouter(prefix="/evidence", tags=["Evidence Management"])
 
@@ -108,3 +126,36 @@ def run_integrity_audit(
         notes=payload.notes
     )
     return custody_log
+
+@router.post("/compare", response_model=EvidenceComparisonResponse)
+def compare_evidence_endpoint(
+    payload: EvidenceComparisonRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Performs forensic side-by-side artifact comparison:
+    hashes, file sizes, Shannon entropy, magic headers, string overlap, and hex diff.
+    """
+    return compare_evidence_artifacts(db, payload.evidence_id_a, payload.evidence_id_b)
+
+@router.post("/{evidence_id}/transfer", response_model=CustodyLogResponse)
+def transfer_custody_endpoint(
+    evidence_id: str,
+    payload: CustodyTransferRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Records an official legal Chain of Custody transfer event.
+    """
+    return transfer_custody(
+        db=db,
+        evidence_id=evidence_id,
+        transferred_to=payload.transferred_to,
+        recipient_badge=payload.recipient_badge,
+        transferred_by=payload.transferred_by,
+        releasing_badge=payload.releasing_badge,
+        new_location=payload.new_location,
+        reason=payload.reason,
+        notes=payload.notes
+    )
+
